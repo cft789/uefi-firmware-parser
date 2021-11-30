@@ -383,6 +383,9 @@ class VSS2Variable(FirmwareVariableStore):
 
 
 class VSS2VariableHeaderStore(FirmwareVariableStore):
+    '''VSS2 variable has a region header, means there is a VSS2 region
+    The variables in this region also has a header itself
+    '''
     @classmethod
     def valid(cls, data):
         if len(data) > ctypes.sizeof(VSS2VariableStoreHeader):
@@ -456,9 +459,10 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
 
 
 class EVSAEntry(FirmwareVariableStore):
-    # A EVSA Variables' GUID, Name and data were not stored adjacently
-    # So there we only parsed the header and dump the data, but haven't parsed the data in a item
-    # If you need it, you can parse them with the formats in structs/uefi_structs.py
+    '''A EVSA Variables' GUID, Name and data were not stored adjacently
+    So there we only parsed the header and dump the data, but haven't parsed the data in a item
+    If you need it, you can parse them with the formats in structs/uefi_structs.py
+    '''
     def __init__(self, data):
         self.data = data
         self.parse_structure(self.data, EVSAEntryHeader)
@@ -1535,6 +1539,7 @@ class NVRAMVolume(FirmwareObject):
         return res
 
     def dump(self, parent="", index=None):
+        parent = os.path.join(parent, 'nvram')
         dump_data(os.path.join(parent, "filesystem.var"), self._data)
         for i, variable in enumerate(self.variables):
             variable.dump(parent, i)
