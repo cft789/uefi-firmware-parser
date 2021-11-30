@@ -7,6 +7,7 @@ from __future__ import print_function
 import os
 import struct
 import logging
+import ctypes
 
 from .base import FirmwareObject, StructuredObject, RawObject, AutoRawObject
 from .utils import *
@@ -83,9 +84,13 @@ def compare(data1, data2):
     md5_1 = md5(data1).hexdigest()
     md5_2 = md5(data2).hexdigest()
     if (md5_1 != md5_2):
-        print ("%s != %s" % (red(md5_1), red(md5_2)))
+        print("%s != %s" % (red(md5_1), red(md5_2)))
         return False
     return True
+
+
+def length_align(length, granularity):
+    return ((length + granularity - 1) // granularity) * granularity
 
 
 def decompress(algorithms, compressed_data):
@@ -263,6 +268,7 @@ class NVARVariable(FirmwareVariable):
                 'attributes': self.attrs["attrs"]
             }
 
+
 class NVARVariableStore(FirmwareVariableStore):
     '''NVAR has no header, only a series of variable headers.'''
 
@@ -322,6 +328,212 @@ class NVARVariableStore(FirmwareVariableStore):
     def to_dict(self):
         if not self.valid_header:
             return None
+        variables = []
+        for variable in self.variables:
+            variables.append(variable.to_dict())
+        return {
+            'variables': variables,
+        }
+
+
+class VSS2Variable(FirmwareVariableStore):
+    def __init__(self, data, headerType):
+        # if call this method, it means that it's a valid VSS2 Variable region
+        self.data = data
+        self.parse_structure(self.data, headerType)
+        self.real_size = self.structure_size + self.structure.NameSize + self.structure.DataSize
+        self.size = length_align(self.real_size, 4)   # aligned size
+        self.guid = self.structure.VendorGuid
+        self.attrs = {"attrs": self.structure.Attributes}
+
+    def process(self):
+        if self.structure.StartId != 0x55aa:
+            return False
+        if len(self.data) < self.size:
+            return False
+
+        self.data = self.data[:self.real_size]
+        self.name = uefi_name(self.data[self.structure_size: self.structure_size + self.structure.NameSize])
+        # self.var_data = self.data[self.structure_size + self.structure.NameSize: self.real_size]
+        return True
+
+    def build(self, generate_checksum=False, debug=False):
+        pass
+
+    def dump(self, parent, index=0):
+        path = os.path.join(parent, "variable%d.vss2" % index)
+        dump_data(path, self.data)
+
+    def showinfo(self, ts="", index=0):
+        if self.guid is not None and self.name is not None:
+            print("%s %s %s %s" % (
+                blue("%sVariable:" % ts),
+                green(sguid(self.guid)),
+                purple(self.name),
+                "attrs= %s" % self.attrs["attrs"]
+            ))
+
+    def to_dict(self):
+        if self.guid is not None and self.name is not None:
+            return {
+                'guid': sguid(self.guid),
+                'name': self.name,
+                'attributes': self.attrs["attrs"]
+            }
+
+
+class VSS2VariableHeaderStore(FirmwareVariableStore):
+    @classmethod
+    def valid(cls, data):
+        if len(data) > ctypes.sizeof(VSS2VariableStoreHeader):
+            guid = sguid(struct.unpack("<16s", data[:16]))
+            if guid in list(VSS2_TYPE_GUIDS.values()):
+                return True
+
+        return False
+
+    def __init__(self, data):
+        # if call this method, it means that it's a valid VSS2 Variable region
+        self.data = data
+        self.variables = []
+        self.parse_structure(self.data, VSS2VariableStoreHeader)
+        self.size = self.structure.Size
+        self.guid = sguid(self.structure.Signature)
+        if self.guid == VSS2_TYPE_GUIDS['NVRAM_VSS2_AUTH_VAR_KEY_DATABASE']:
+            self.vss2_struct = VSS2AuthVariableHeader
+        elif self.guid == VSS2_TYPE_GUIDS['NVRAM_VSS2_STORE_GUID']:
+            self.vss2_struct = VSSVariableHeader
+        else:
+            self.vss2_type = None
+
+    def process(self):
+        if self.vss2_struct is None:
+            return False
+        dlog(self, 'VSS2 Variable')
+        self.data = self.data[:self.size]
+        var_data = self.data[self.structure_size:]
+
+        while len(var_data) > ctypes.sizeof(self.vss2_struct):
+            vss_var = VSS2Variable(var_data, self.vss2_struct)
+            if not vss_var.process():
+                break
+            self.variables.append(vss_var)
+            var_data = var_data[vss_var.size]
+
+        return True
+
+    def build(self, generate_checksum=False, debug=False):
+        pass
+
+    def dump(self, parent, index=0):
+        if self.vss2_struct is None:
+            return
+        parent = os.path.join(parent, 'variable-%d-vss2' % index)
+        path = os.path.join(parent, "vss2.vars")
+        dump_data(path, self.data)
+        for i, variable in enumerate(self.variables):
+            variable.dump(parent, i)
+        pass
+
+    def showinfo(self, ts="", index=0):
+        if self.vss2_struct is None:
+            return
+        print("%s" % (
+            blue("%sVSS2 Variable Store:" % ts),
+        ))
+        for i, variable in enumerate(self.variables):
+            variable.showinfo("%s  " % ts, i)
+
+    def to_dict(self):
+        if self.vss2_struct is None:
+            return
+        variables = []
+        for variable in self.variables:
+            variables.append(variable.to_dict())
+        return {
+            'variables': variables
+        }
+
+
+class EVSAEntry(FirmwareVariableStore):
+    # A EVSA Variables' GUID, Name and data were not stored adjacently
+    # So there we only parsed the header and dump the data, but haven't parsed the data in a item
+    # If you need it, you can parse them with the formats in structs/uefi_structs.py
+    def __init__(self, data):
+        self.data = data
+        self.parse_structure(self.data, EVSAEntryHeader)
+        self.size = self.structure.Size
+
+    def process(self):
+        self.data = self.data[:self.size]
+        return True
+
+    def build(self, generate_checksum=False, debug=False):
+        pass
+
+    def dump(self, parent, index=0):
+        path = os.path.join(parent, "variable%d.evsa" % index)
+        dump_data(path, self.data)
+
+    def showinfo(self, ts="", index=0):
+        print("%s %s" % (
+            blue("%sVariable:" % ts),
+            "type= %d" % self.structure.Type
+        ))
+
+    def to_dict(self):
+        return {
+            "Type": self.structure.Type
+        }
+
+
+class EVSAStore(FirmwareVariableStore):
+    @classmethod
+    def valid(cls, data):
+        if len(data) > ctypes.sizeof(EVSAStoreEntry):
+            if data[4:8] == b"EVSA":
+                return True
+        return False
+
+    def __init__(self, data):
+        self.data = data
+        self.parse_structure(self.data, EVSAStoreEntry)
+        self.data = self.data[:self.structure.StoreSize]
+        self.size = self.structure.StoreSize
+        self.variables = []
+
+    def process(self):
+        dlog(self, "EVSA")
+        var_data = self.data[self.structure_size:]
+        while len(var_data) > ctypes.sizeof(EVSAEntryHeader):
+            var = EVSAEntry(var_data)
+            if not var.process():
+                break
+
+            self.variables.append(var)
+            var_data = var_data[var.size:]
+        return True
+
+    def build(self, generate_checksum=False, debug=False):
+        pass
+
+    def dump(self, parent, index=0):
+        parent = os.path.join(parent, 'variable-%d-evsa' % index)
+        path = os.path.join(parent, "evsa.vars")
+        dump_data(path, self.data)
+        for i, variable in enumerate(self.variables):
+            variable.dump(parent, i)
+        pass
+
+    def showinfo(self, ts="", index=0):
+        print("%s %s" % (
+            blue("%sEVSA Variable Store:" % ts),
+            "variables: %d" % self.attrs["variables"]
+        ))
+        for i, variable in enumerate(self.variables):
+            variable.showinfo("%s  " % ts, i)
+
+    def to_dict(self):
         variables = []
         for variable in self.variables:
             variables.append(variable.to_dict())
@@ -1128,11 +1340,11 @@ class FirmwareFile(FirmwareObject):
         return data[:4] == "\x01\x00\x00\x00" and data[20:24] == "\x01\x00\x00\x00"
 
     def _guessinfo_dict(self, data):
-        if _is_ucode(data):
+        if self._is_ucode(data):
             return "Might contain CPU microcodes"
 
     def _guessinfo_text(self, ts, data, index="N/A"):
-        if _is_ucode(data):
+        if self._is_ucode(data):
             print ("%s Might contain CPU microcodes" % (
                 blue("%sBlob %d:" % (ts, index))))
 
@@ -1228,6 +1440,110 @@ class FirmwareFileSystem(FirmwareObject):
             _file.dump(parent)
 
 
+class NVRAMVolume(FirmwareObject):
+
+    _FLASH_MAP_SIGNATURE = b'_FLASH_MAP'
+    _CMDB_SIGNATURE = b'CMDB'
+    _CMDB_SIZE = 0x100
+    _OEM_PUBKEY_SIGNATURE = b'RSA1'
+    _OEM_PUBKEY_SIZE = 0x9c
+    _OEM_MAKER_SIGNATURE = b'WINDOWS\x20'
+    _OEM_MAKER_SIZE = 0xb6
+    _FDC_SIGNATURE = b'_FDC'
+
+    def __init__(self, data):
+        self._data = data
+        self.variables = []
+        self.raw_objects = {}
+
+    @property
+    def objects(self):
+        return self.variables or []
+
+    def process(self):
+        dlog(self, 'NVRAM Volume')
+        data = self._data
+        while len(data) > 0:
+            if VSS2VariableHeaderStore.valid(data):  # is a VSS2 Region
+                vss2_var_store = VSS2VariableHeaderStore(data)
+                if vss2_var_store.process():
+                    self.variables.append(vss2_var_store)
+                    data = data[vss2_var_store.size:]
+            elif EVSAStore.valid(data):     # is a EVSA Region
+                evsa_store = EVSAStore(data)
+                if evsa_store.process():
+                    self.variables.append(evsa_store)
+                    data = data[evsa_store.size:]
+            else:  # The other structs, we just need to know their size
+                # FTW Block
+                if len(data) > ctypes.sizeof(FTWBlock) and sguid(data[:16]) in list(FTW_BLOCK_SIGNATURES.values()):
+                    ftw_size = struct.unpack("<Q", data[0x18: 0x20])[0] + ctypes.sizeof(FTWBlock)
+                    self.raw_objects[data[:ftw_size]] = 'FTWBlock'
+                    data = data[ftw_size:]
+                # FlashMap
+                elif len(data) > ctypes.sizeof(FlashMap) and data[:10] == self._FLASH_MAP_SIGNATURE:
+                    records_number = struct.unpack('<H', data[10: 12])[0]
+                    map_size = records_number * ctypes.sizeof(FlashMapEntry)
+                    total_size = map_size + ctypes.sizeof(FlashMap)
+                    self.raw_objects[data[:total_size]] = 'FlashMap'
+                    data = data[total_size:]
+                # CMDB
+                elif len(data) > ctypes.sizeof(CMDBHeader) and data[:4] == self._CMDB_SIGNATURE:
+                    self.raw_objects[data[:self._CMDB_SIZE]] = 'CMDB'
+                    data = data[self._CMDB_SIZE:]
+                # OEM Pubkey
+                elif len(data) > ctypes.sizeof(OEMActivationPubkey) and data[16:20] == self._OEM_PUBKEY_SIGNATURE:
+                    self.raw_objects[data[:self._OEM_PUBKEY_SIZE]] = 'OEMPubkey'
+                    data = data[self._OEM_PUBKEY_SIZE:]
+                # OEM Maker
+                elif len(data) > ctypes.sizeof(OEMActivationMaker) and data[26:34] == self._OEM_MAKER_SIGNATURE:
+                    self.raw_objects[data[:self._OEM_MAKER_SIZE]] = 'OEMMaker'
+                    data = data[self._OEM_MAKER_SIZE:]
+                # Intel Microcode
+                elif len(data) > ctypes.sizeof(CPUMicrocodeHeader) \
+                        and data[:4] == b"\x01\x00\x00\x00" and data[20:24] == b"\x01\x00\x00\x00":
+                    total_size = struct.unpack("<I", data[32: 36])[0]
+                    self.raw_objects[data[:total_size]] = 'IntelMicrocode'
+                    data = data[total_size:]
+                # FDC Volume
+                elif len(data) > ctypes.sizeof(FDCVolumeHeader) and data[:4] == self._FDC_SIGNATURE:
+                    total_size = struct.unpack("<I", data[4: 8])
+                    self.raw_objects[data[:total_size]] = 'FDCVolume'
+                    data = data[total_size:]
+                else:    # may be padding or something I don't know about
+                    total_size = 0
+                    while (total_size < len(data)) and (data[total_size: total_size+1] == b'\xff'):
+                        total_size += 1
+                    if total_size == 0:   # I don't know how to parse it
+                        self.raw_objects[data] = 'rawdata'
+                        break
+                    # self.raw_objects[data[:total_size]] = 'padding'   # don't dump the padding
+                    data = data[total_size:]
+        return True
+
+    def build(self, generate_checksum=False, debug=False):
+        pass
+
+    def showinfo(self, ts="", index=None):
+        for i, variable_region in enumerate(self.variables):
+            variable_region.showinfo(ts + " ", index=i)
+
+    def to_dict(self):
+        res = []
+        for variable in self.variables:
+            res.append(variable.to_dict())
+        return res
+
+    def dump(self, parent="", index=None):
+        dump_data(os.path.join(parent, "filesystem.var"), self._data)
+        for i, variable in enumerate(self.variables):
+            variable.dump(parent, i)
+
+        for i, obj in enumerate(list(self.raw_objects.keys())):
+            file_name = 'raw%d.%s' % (i, self.raw_objects[obj])
+            dump_data(os.path.join(parent, file_name), obj)
+
+
 class FirmwareVolume(FirmwareObject):
     '''Describes the features and layout of the firmware volume.
 
@@ -1279,6 +1595,7 @@ class FirmwareVolume(FirmwareObject):
 
     def __init__(self, data, name="0"):
         self.firmware_filesystems = []
+        self.variable_volumes = []
         self.raw_objects = []
         self.name = name
         self.valid_header = False
@@ -1379,8 +1696,12 @@ class FirmwareVolume(FirmwareObject):
                 self.firmware_filesystems.append(firmware_filesystem)
             elif sguid(self.guid) == FIRMWARE_VOLUME_GUIDS["NVRAM_EVSA"]:
                 # If this is an NVRAM volume, there are no FFS/FFs.
-                self.raw_objects.append(
-                    NVARVariableStore(data[:block[0] * block[1]]))
+                variable_volume = NVRAMVolume(data[:block[0] * block[1]])
+                vars_status = variable_volume.process()
+                if not vars_status:
+                    dlog(self, self.name, 'Could not parse NVRAM Volume')
+                    status = False
+                self.variable_volumes.append(variable_volume)
             else:
                 self.raw_objects.append(data[:block[0] * block[1]])
             data = data[block[0] * block[1]:]
@@ -1433,8 +1754,10 @@ class FirmwareVolume(FirmwareObject):
 
         for _ffs in self.firmware_filesystems:
             _ffs.showinfo(ts + " ")
+        for _var in self.variable_volumes:
+            _var.showinfo(ts + " ")
         for raw in self.raw_objects:
-            print("%s%s NVRAM" % ("%s  " % ts, blue("Raw section:")))
+            print("%s%s Unknown" % ("%s  " % ts, blue("Raw section:")))
 
     def to_dict(self):
         if not self.valid_header or len(self.data) == 0:
@@ -1473,7 +1796,10 @@ class FirmwareVolume(FirmwareObject):
         for _ffs in self.firmware_filesystems:
             _ffs.dump(os.path.join(parent, "volume-%s" % self.name))
 
-1
+        for _var in self.variable_volumes:
+            _var.dump(os.path.join(parent, "volume-%s" % self.name))
+
+
 class FirmwareCapsule(FirmwareObject):
     '''EFI Capsule Header.
 
