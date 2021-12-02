@@ -224,6 +224,7 @@ class VSS2VariableStoreHeader(ctypes.LittleEndianStructure):
 # Variable will in this format if "Signature" is NVRAM_VSS2_AUTH_VAR_KEY_DATABASE
 # start from the end of the VSS2VariableStoreHeader
 class VSS2AuthVariableHeader(ctypes.LittleEndianStructure):   # 4-bytes aligned
+    _pack_ = 4   # without this statement, the struct will aligned for uint64_t(8), causes the error structure_size
     _fields_ = [
         ("StartId", uint16_t),       # '\xaa\x55'
         ("State", uint8_t),
@@ -397,6 +398,7 @@ class OEMActivationPubkey(ctypes.LittleEndianStructure):
 
 
 class OEMActivationMaker(ctypes.LittleEndianStructure):
+    _pack_ = 1  # without this statement causes the error structure_size
     _fields_ = [
         ("Type", uint32_t),
         ("Size", uint32_t),  # fixed value 0xB6
