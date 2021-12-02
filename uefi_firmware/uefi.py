@@ -217,7 +217,7 @@ class NVARVariable(FirmwareVariable):
             offset += 1
 
         if bit_set(self.structure.Attributes, NVRAM_ATTRIBUTES["DATA"]):
-            self.data_offset = self.size - self.structure_size
+            self.data_offset = self.structure_size
             # self.subsections.append(RawObject(self.data[offset:]))
             return True
 
