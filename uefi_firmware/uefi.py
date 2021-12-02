@@ -8,6 +8,8 @@ import os
 import struct
 import logging
 import ctypes
+import pickle
+import enum
 
 from .base import FirmwareObject, StructuredObject, RawObject, AutoRawObject
 from .utils import *
@@ -313,12 +315,26 @@ class NVARVariableStore(FirmwareVariableStore):
         dump_data(path, self.data)
         for i, variable in enumerate(self.variables):
             variable.dump(parent, i)
-        pass
+
+        variables_info = []
+        for variable in self.variables:   # dump the variable in a object file
+            if variable.guid is not None or variable.name is not None:
+                variables_info.append(
+                    {
+                        'guid': sguid(variable.guid),
+                        'name': variable.name,
+                        'attributes': variable.attrs["attrs"],
+                        'data': variable.data[variable.data_offset:]
+                    }
+                )
+        path = os.path.join(parent, "nvar.pickle")
+        with open(path, 'wb') as fp:
+            pickle.dump(variables_info, fp)
 
     def showinfo(self, ts="", index=0):
         if not self.valid_header:
             return
-        print ("%s %s" % (
+        print("%s %s" % (
             blue("%sNVAR Variable Store:" % ts),
             "variables: %d" % self.attrs["variables"]
         ))
@@ -345,6 +361,7 @@ class VSS2Variable(FirmwareVariableStore):
         self.size = length_align(self.real_size, 4)   # aligned size
         self.guid = self.structure.VendorGuid
         self.attrs = {"attrs": self.structure.Attributes}
+        self.name = None
 
     def process(self):
         if self.structure.StartId != 0x55aa:
@@ -354,7 +371,6 @@ class VSS2Variable(FirmwareVariableStore):
 
         self.data = self.data[:self.real_size]
         self.name = uefi_name(self.data[self.structure_size: self.structure_size + self.structure.NameSize])
-        # self.var_data = self.data[self.structure_size + self.structure.NameSize: self.real_size]
         return True
 
     def build(self, generate_checksum=False, debug=False):
@@ -389,7 +405,7 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
     @classmethod
     def valid(cls, data):
         if len(data) > ctypes.sizeof(VSS2VariableStoreHeader):
-            guid = sguid(struct.unpack("<16s", data[:16]))
+            guid = sguid(struct.unpack("<16s", data[:16])[0])
             if guid in list(VSS2_TYPE_GUIDS.values()):
                 return True
 
@@ -421,7 +437,7 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
             if not vss_var.process():
                 break
             self.variables.append(vss_var)
-            var_data = var_data[vss_var.size]
+            var_data = var_data[vss_var.size:]
 
         return True
 
@@ -436,7 +452,21 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
         dump_data(path, self.data)
         for i, variable in enumerate(self.variables):
             variable.dump(parent, i)
-        pass
+
+        variables_info = []
+        for variable in self.variables:
+            if variable.guid is not None or variable.name is not None:
+                variables_info.append(
+                    {
+                        'guid': sguid(variable.guid),
+                        'name': variable.name,
+                        'attributes': variable.attrs["attrs"],
+                        'data': variable.data[variable.structure_size+variable.structure.NameSize: variable.real_size]
+                    }
+                )
+        path = os.path.join(parent, "vss2.pickle")
+        with open(path, 'wb') as fp:
+            pickle.dump(variables_info, fp)
 
     def showinfo(self, ts="", index=0):
         if self.vss2_struct is None:
@@ -460,16 +490,39 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
 
 class EVSAEntry(FirmwareVariableStore):
     '''A EVSA Variables' GUID, Name and data were not stored adjacently
-    So there we only parsed the header and dump the data, but haven't parsed the data in a item
-    If you need it, you can parse them with the formats in structs/uefi_structs.py
+
+    A EVSA data entry's guid and name are saved in other entries that has the same GuidId and VarId
     '''
     def __init__(self, data):
         self.data = data
         self.parse_structure(self.data, EVSAEntryHeader)
+        self.type = self.structure.Type
         self.size = self.structure.Size
 
+    class EVSAType(enum.Enum):
+        Guid = 1
+        Name = 2
+        Data = 3
+
     def process(self):
-        self.data = self.data[:self.size]
+        if self.type in [EVSA_ENTRY_TYPES["NVRAM_EVSA_ENTRY_TYPE_GUID1"],
+                         EVSA_ENTRY_TYPES["NVRAM_EVSA_ENTRY_TYPE_GUID2"]]:
+            self.type = self.EVSAType.Guid
+            self.guid_id, self.guid = struct.unpack('<H16s', self.data[self.structure_size:self.structure_size+18])
+        elif self.type in [EVSA_ENTRY_TYPES["NVRAM_EVSA_ENTRY_TYPE_NAME1"],
+                         EVSA_ENTRY_TYPES["NVRAM_EVSA_ENTRY_TYPE_NAME2"]]:
+            self.type = self.EVSAType.Name
+            self.var_id = struct.unpack('<H', self.data[self.structure_size:self.structure_size+2])
+            self.name = self.data[self.structure_size+2:self.size].decode(encoding='utf-16le').strip()
+        elif self.type in [EVSA_ENTRY_TYPES["NVRAM_EVSA_ENTRY_TYPE_DATA1"],
+                           EVSA_ENTRY_TYPES["NVRAM_EVSA_ENTRY_TYPE_DATA2"]]:
+            self.type = self.EVSAType.Data
+            self.guid_id, self.var_id = struct.unpack("<HH", self.data[self.structure_size:self.structure_size+4])
+            self.data = self.data[self.structure_size+4:]
+        elif self.type in list(EVSA_ENTRY_TYPES.values()):
+            self.data = self.data[:self.size]
+        else:
+            return False
         return True
 
     def build(self, generate_checksum=False, debug=False):
@@ -505,6 +558,9 @@ class EVSAStore(FirmwareVariableStore):
         self.data = self.data[:self.structure.StoreSize]
         self.size = self.structure.StoreSize
         self.variables = []
+        self.guid_list = []
+        self.name_list = []
+        self.data_list = []
 
     def process(self):
         dlog(self, "EVSA")
@@ -514,8 +570,15 @@ class EVSAStore(FirmwareVariableStore):
             if not var.process():
                 break
 
-            self.variables.append(var)
+            if var.type == EVSAEntry.EVSAType.Guid:
+                self.guid_list.append(var)
+            elif var.type == EVSAEntry.EVSAType.Name:
+                self.name_list.append(var)
+            elif var.type == EVSAEntry.EVSAType.Data:
+                self.data_list.append(var)
             var_data = var_data[var.size:]
+
+        self.variables = self.guid_list + self.name_list + self.data_list
         return True
 
     def build(self, generate_checksum=False, debug=False):
@@ -527,7 +590,28 @@ class EVSAStore(FirmwareVariableStore):
         dump_data(path, self.data)
         for i, variable in enumerate(self.variables):
             variable.dump(parent, i)
-        pass
+
+        variables_info = []
+        for variable in self.data_list:
+            info = {
+                'guid': None,
+                'name': None,
+                'attributes': None,
+                'data': variable.data
+            }
+            for guid_var in self.guid_list:
+                if guid_var.guid_id == variable.guid_id:
+                    info['guid'] = guid_var.guid
+                    break
+            for name_var in self.name_list:
+                if name_var.var_id == variable.var_id:
+                    info['name'] = name_var.name
+                    break
+            if info['guid'] is not None or info['name'] is not None:
+                variables_info.append(info)
+        path = os.path.join(parent, "evsa.pickle")
+        with open(path, 'wb') as fp:
+            pickle.dump(variables_info, fp)
 
     def showinfo(self, ts="", index=0):
         print("%s %s" % (
@@ -1425,7 +1509,6 @@ class FirmwareFileSystem(FirmwareObject):
             ))
 
         return data
-        pass
 
     def showinfo(self, ts='', index=None):
         for i, firmware_file in enumerate(self.files):
