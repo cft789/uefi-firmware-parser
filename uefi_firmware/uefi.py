@@ -423,7 +423,7 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
         elif self.guid == VSS2_TYPE_GUIDS['NVRAM_VSS2_STORE_GUID']:
             self.vss2_struct = VSSVariableHeader
         else:
-            self.vss2_type = None
+            self.vss2_struct = None
 
     def process(self):
         if self.vss2_struct is None:
@@ -1556,6 +1556,8 @@ class NVRAMVolume(FirmwareObject):
                 if vss2_var_store.process():
                     self.variables.append(vss2_var_store)
                     data = data[vss2_var_store.size:]
+                else:
+                    data = data[vss2_var_store.structure_size:]
             elif EVSAStore.valid(data):     # is a EVSA Region
                 evsa_store = EVSAStore(data)
                 if evsa_store.process():
