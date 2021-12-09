@@ -909,7 +909,7 @@ class GuidDefinedSection(EfiSection):
         status = True
         if sguid(self.guid) == FIRMWARE_GUIDED_GUIDS["LZMA_COMPRESSED"]:
             status = decompress_guid(efi_compressor.LzmaDecompress)
-        if sguid(self.guid) == FIRMWARE_GUIDED_GUIDS["TIANO_COMPRESSED"]:
+        elif sguid(self.guid) == FIRMWARE_GUIDED_GUIDS["TIANO_COMPRESSED"]:
             status = decompress_guid(efi_compressor.TianoDecompress)
         # Todo: check for processing required attribute
         elif sguid(self.guid) == FIRMWARE_GUIDED_GUIDS["STATIC_GUID"]:
