@@ -1076,15 +1076,20 @@ class FirmwareFileSystemSection(EfiSection):
                 # as the AutoRawObject's managed object
                 raw = AutoRawObject(self.data)
                 raw.process()
+                # At there, the parsed_object has been processed
+                # and the parsed_object may be MultiObject or None, which doesn't have 'process' method
                 if raw.object is not None:
                     self.parsed_object = raw.object
 
-        self.attrs = {"type": self.type, "size": self.size}
-        self.attrs["type_name"] = _get_section_type(self.type)[0]
+        self.attrs = {"type": self.type, "size": self.size, "type_name": _get_section_type(self.type)[0]}
 
         if self.parsed_object is None:
             return True
-        status = self.parsed_object.process()
+        from . import MultiObject
+        if type(self.parsed_object) == MultiObject:
+            status = True
+        else:
+            status = self.parsed_object.process()
         if not status:
             dlog(self, sguid(self.guid), 'Could not parse %s' % (
                 self.parsed_object.__class__.__name__))
