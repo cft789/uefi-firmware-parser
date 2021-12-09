@@ -327,7 +327,7 @@ class NVARVariableStore(FirmwareVariableStore):
                         'data': variable.data[variable.data_offset:]
                     }
                 )
-        path = os.path.join(parent, "nvar.pickle")
+        path = os.path.join(parent, "nvar.variable.pickle")
         with open(path, 'wb') as fp:
             pickle.dump(variables_info, fp)
 
@@ -464,7 +464,7 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
                         'data': variable.data[variable.structure_size+variable.structure.NameSize: variable.real_size]
                     }
                 )
-        path = os.path.join(parent, "vss2.pickle")
+        path = os.path.join(parent, "vss2.variable.pickle")
         with open(path, 'wb') as fp:
             pickle.dump(variables_info, fp)
 
@@ -609,7 +609,7 @@ class EVSAStore(FirmwareVariableStore):
                     break
             if info['guid'] is not None or info['name'] is not None:
                 variables_info.append(info)
-        path = os.path.join(parent, "evsa.pickle")
+        path = os.path.join(parent, "evsa.variable.pickle")
         with open(path, 'wb') as fp:
             pickle.dump(variables_info, fp)
 
