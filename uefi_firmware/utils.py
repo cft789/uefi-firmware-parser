@@ -7,6 +7,14 @@ import struct
 from builtins import bytes
 
 nocolor = False
+verbose = True
+
+
+def set_verbose(value):
+    '''modify verbose, which determines print the dump filename or not'''
+    global verbose
+    verbose = value
+
 
 def blue(msg):
     '''Return the input string as console-escaped blue.'''
@@ -124,7 +132,8 @@ def dump_data(name, data):
                 os.makedirs(os.path.dirname(name))
         with open(name, 'wb') as fh:
             fh.write(data)
-        print("Wrote: %s" % (red(name)))
+        if verbose:
+            print("Wrote: %s" % (red(name)))
     except Exception as e:
         print("Error: could not write (%s), (%s)." % (name, str(e)))
 
