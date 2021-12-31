@@ -4,6 +4,7 @@ extracting, and rebuilding UEFI data.
 '''
 from __future__ import print_function
 
+import json
 import os
 import struct
 import logging
@@ -118,18 +119,18 @@ def decompress(algorithms, compressed_data):
 
 
 def find_volumes(data, process=True):
-    '''Search for arbitary firmware volumes within data.
+    '''Search for arbitrary firmware volumes within data.
 
     This is helpful within Raw files and sections.
 
     Some firmware vendors will implement custom checksums or metadata within
     UEFIFiles. It is often helpful to 'lose' this information and continue to
-    discovery volumnes and other structures. In these cases it is ultimately
+    discovery volumes and other structures. In these cases it is ultimately
     helpful if folks/contributors will add support for representing each
     proprietary structure.
 
     Args:
-        process (Optional[bool]): Call process on each discovered volumn.
+        process (Optional[bool]): Call process on each discovered volume.
 
     Return:
         list: The set of discovered firmware objects.
@@ -157,7 +158,7 @@ def find_volumes(data, process=True):
 
 class FirmwareVariableStore(FirmwareObject, StructuredObject):
 
-    '''An firmware-related variable storage structure (think NVRAM).'''
+    '''A firmware-related variable storage structure (think NVRAM).'''
     variables = []
 
     @property
@@ -317,7 +318,7 @@ class NVARVariableStore(FirmwareVariableStore):
             variable.dump(parent, i)
 
         variables_info = []
-        for variable in self.variables:   # dump the variable in a object file
+        for variable in self.variables:   # dump the variable in an object file
             if variable.guid is not None or variable.name is not None:
                 variables_info.append(
                     {
@@ -1527,9 +1528,21 @@ class FirmwareFileSystem(FirmwareObject):
 
     def dump(self, parent=""):
         dump_data(os.path.join(parent, "filesystem.ffs"), self._data)
-
+        file_order = {
+            "order": list()
+        }
         for _file in self.files:
             _file.dump(parent)
+            if _file.guid is not None:
+                file_order["order"].append(sguid(_file.guid))
+
+        dst = os.path.join(parent, "files.order.json")
+        if os.path.isfile(dst):  # in fact, uefi-firmware-parser may put several in one folder
+            with open(dst, "r") as f:
+                data = json.load(f)
+            file_order["order"] += data["order"]
+        with open(dst, "w") as f:
+            json.dump(file_order, f, indent=4)
 
 
 class NVRAMVolume(FirmwareObject):
