@@ -67,6 +67,15 @@ def parse_depex(input_data):
             depex.append({ 'op': "END" })
         elif opcode == 0x09:
             depex.append({ 'op': "SOR" })
+        elif opcode == 0xff:
+            guid = input_data[offset:offset + 16]
+            guid_name = get_guid_name(guid)
+            offset = offset + 16
+            depex.append({
+                'op': "REPLACE_TRUE",  # can find it in edk2/MdeModulePkg/Core/Dxe/Dispatcher/Dependency.c
+                'name': guid_name,
+                'guid': sguid(guid),
+            })
         else:
             depex.append({ 'op': opcode })
 
