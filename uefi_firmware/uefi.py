@@ -26,7 +26,25 @@ def parse_depex(input_data):
     while offset < len(input_data):
         opcode = ord(input_data[offset:offset+1])
         offset = offset + 1
-        if opcode == 0x02:
+        if opcode == 0x00:
+            guid = input_data[offset:offset+16]
+            guid_name = get_guid_name(guid)
+            offset = offset + 16
+            depex.append({
+                'op': "BEFORE",
+                'name': guid_name,
+                'guid': sguid(guid),
+            })
+        elif opcode == 0x01:
+            guid = input_data[offset:offset+16]
+            guid_name = get_guid_name(guid)
+            offset = offset + 16
+            depex.append({
+                'op': "AFTER",
+                'name': guid_name,
+                'guid': sguid(guid),
+            })
+        elif opcode == 0x02:
             guid = input_data[offset:offset+16]
             guid_name = get_guid_name(guid)
             offset = offset + 16
@@ -43,10 +61,12 @@ def parse_depex(input_data):
             depex.append({ 'op': "NOT" })
         elif opcode == 0x06:
             depex.append({ 'op': "TRUE" })
-        elif opcode == 0x06:
+        elif opcode == 0x07:
             depex.append({ 'op': "FALSE" })
         elif opcode == 0x08:
             depex.append({ 'op': "END" })
+        elif opcode == 0x09:
+            depex.append({ 'op': "SOR" })
         else:
             depex.append({ 'op': opcode })
 
@@ -218,7 +238,7 @@ class NVARVariable(FirmwareVariable):
             offset += 1
 
         if bit_set(self.structure.Attributes, NVRAM_ATTRIBUTES["DATA"]):
-            self.data_offset = self.structure_size
+            self.data_offset = offset
             # self.subsections.append(RawObject(self.data[offset:]))
             return True
 
@@ -240,9 +260,11 @@ class NVARVariable(FirmwareVariable):
 
     def build(self, generate_checksum=False, debug=False):
         header = self.structure_data
-        data = ""
+        data = b""
         for section in self.subsections:
             data += section.build(generate_checksum, debug)
+        if len(self.subsections) == 0:
+            data = self.data[self.data_offset:]
         # Metadata includes optional guid/name.
         meta_data = self.data[self.structure_size:self.data_offset]
         return header + meta_data + data
