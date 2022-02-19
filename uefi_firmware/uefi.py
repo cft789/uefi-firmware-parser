@@ -1550,21 +1550,8 @@ class FirmwareFileSystem(FirmwareObject):
 
     def dump(self, parent=""):
         dump_data(os.path.join(parent, "filesystem.ffs"), self._data)
-        file_order = {
-            "order": list()
-        }
         for _file in self.files:
             _file.dump(parent)
-            if _file.guid is not None:
-                file_order["order"].append(sguid(_file.guid))
-
-        dst = os.path.join(parent, "files.order.json")
-        if os.path.isfile(dst):  # in fact, uefi-firmware-parser may put several in one folder
-            with open(dst, "r") as f:
-                data = json.load(f)
-            file_order["order"] += data["order"]
-        with open(dst, "w") as f:
-            json.dump(file_order, f, indent=4)
 
 
 class NVRAMVolume(FirmwareObject):
