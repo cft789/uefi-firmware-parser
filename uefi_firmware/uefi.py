@@ -226,6 +226,7 @@ class NVARVariable(FirmwareVariable):
         self.subsections = []
         self.name = None
         self.guid = None
+        self.guid_index = None
         self.data = data
         self.std_defaults = std_defaults
 
@@ -245,6 +246,7 @@ class NVARVariable(FirmwareVariable):
             offset += 16
         else:
             # Increment data by 1!
+            self.guid_index = self.data[offset]
             offset += 1
 
         if bit_set(self.structure.Attributes, NVRAM_ATTRIBUTES["DATA"]):
@@ -313,6 +315,7 @@ class NVARVariableStore(FirmwareVariableStore):
         if not NVARVariable.valid_nvar(data):
             return
         self.data = data
+        self.length = len(self.data)
         self.valid_header = True
         self.std_defaults = std_defaults  # help for building
 
@@ -328,6 +331,9 @@ class NVARVariableStore(FirmwareVariableStore):
             if not nvar.process():
                 break
             total_size += nvar.size
+            if nvar.guid is None:
+                if nvar.guid_index is not None:   # check the GUID store region to get GUID
+                    nvar.guid = self.data[self.length - 16 * (nvar.guid_index + 1): self.length - 16 * nvar.guid_index]
             self.variables.append(nvar)
             var_offset = var_offset[nvar.size:]
             # when variable name is "StdDefaults", It may contain serval variables
