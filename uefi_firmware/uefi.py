@@ -222,11 +222,12 @@ class NVARVariable(FirmwareVariable):
             name = data[:size]
         return (name, size + len(tail))
 
-    def __init__(self, data):
+    def __init__(self, data, std_defaults=False):
         self.subsections = []
         self.name = None
         self.guid = None
         self.data = data
+        self.std_defaults = std_defaults
 
     def process(self):
         dlog(self, 'NVAR')
@@ -306,13 +307,14 @@ class NVARVariable(FirmwareVariable):
 class NVARVariableStore(FirmwareVariableStore):
     '''NVAR has no header, only a series of variable headers.'''
 
-    def __init__(self, data):
+    def __init__(self, data, std_defaults=False):
         self.variables = []
         self.valid_header = False
         if not NVARVariable.valid_nvar(data):
             return
         self.data = data
         self.valid_header = True
+        self.std_defaults = std_defaults  # help for building
 
     def process(self):
         dlog(self, 'NVRAM')
@@ -322,12 +324,17 @@ class NVARVariableStore(FirmwareVariableStore):
         var_offset = self.data
         total_size = 0
         while len(var_offset) > 4:
-            nvar = NVARVariable(var_offset)
+            nvar = NVARVariable(var_offset, self.std_defaults)
             if not nvar.process():
                 break
             total_size += nvar.size
             self.variables.append(nvar)
             var_offset = var_offset[nvar.size:]
+            # when variable name is "StdDefaults", It may contain serval variables
+            if nvar.name is not None and nvar.name == "StdDefaults":
+                var_store = NVARVariableStore(nvar.data[nvar.data_offset:], True)
+                if var_store.valid_header and var_store.process():
+                    self.variables += var_store.variables
 
         # Scope data to just the parsed variables
         self.data = self.data[:total_size]
@@ -337,7 +344,8 @@ class NVARVariableStore(FirmwareVariableStore):
     def build(self, generate_checksum=False, debug=False):
         data = ""
         for variable in self.variables:
-            data += variable.build(generate_checksum, debug)
+            if not variable.std_defaults:
+                data += variable.build(generate_checksum, debug)
         return data
 
     def dump(self, parent, index=0):
@@ -385,6 +393,7 @@ class NVARVariableStore(FirmwareVariableStore):
 
 
 class VSS2Variable(FirmwareVariableStore):
+
     def __init__(self, data, headerType):
         # if call this method, it means that it's a valid VSS2 Variable region
         self.data = data
