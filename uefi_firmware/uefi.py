@@ -467,10 +467,9 @@ class VSS2VariableHeaderStore(FirmwareVariableStore):
         self.guid = sguid(self.structure.Signature)
         if self.guid == VSS2_TYPE_GUIDS['NVRAM_VSS2_AUTH_VAR_KEY_DATABASE']:
             self.vss2_struct = VSS2AuthVariableHeader
-        elif self.guid == VSS2_TYPE_GUIDS['NVRAM_VSS2_STORE_GUID']:
-            self.vss2_struct = VSSVariableHeader
+        # self.guid == VSS2_TYPE_GUIDS['NVRAM_VSS2_STORE_GUID'] or VSS2_TYPE_GUIDS["NVRAM_FDC_STORE_GUID"]
         else:
-            self.vss2_struct = None
+            self.vss2_struct = VSSVariableHeader
 
     def process(self):
         if self.vss2_struct is None:
