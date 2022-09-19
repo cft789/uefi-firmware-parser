@@ -144,7 +144,10 @@ class MultiObject(FirmwareObject):
 
     def dump(self, parent='', index=None):
         for i in range(len(self.objs)):
-            self.objs[i].dump(parent, i)
+            if isinstance(self.objs[i], uefi.FirmwareVolume):
+                self.objs[i].dump(parent, i)
+            else:
+                self.objs[i].dump(parent)
 
 
 class MultiVolumeContainer(FirmwareObject):
