@@ -1349,11 +1349,14 @@ class FirmwareFile(FirmwareObject):
         status = True
 
         # It may be a firmware volume (Lenovo or HP).
+        # In fact, There may have serval volumes and may have paddings. So add a call to find_volumes may be better.
         fv = FirmwareVolume(self.data, sguid(self.guid))
         if fv.valid_header:
             has_object = True
             status = fv.process() and status
             self.raw_blobs.append(fv)
+            objects = find_volumes(self.data)
+            self.raw_blobs += objects
         elif self.data[0x10:0x10 + 4] == FLASH_HEADER:
             # Lenovo may also bundle a flash descriptor as raw content.
             from .flash import FlashDescriptor
