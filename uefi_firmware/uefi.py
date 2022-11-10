@@ -1778,6 +1778,7 @@ class FirmwareVolume(FirmwareObject):
             self.fvname, self.exthdrsize = struct.unpack("<16sI", exthdr)
             # assert self.exthdrsize == self._EXT_HEADER_SIZE    # That's not right. ExtHeader may bigger.
             self.real_hdrlen = self.exthdroff + self.exthdrsize
+            self.real_hdrlen = (self.real_hdrlen + 7) & (~7)   # need 8-byte aligned when 64bit, but how to judge?
         except Exception as e:
             dlog(self, name, "Exception in __init__: %s" % (str(e)))
             print_error("Error invalid FV header data (%s)." % str(e))
